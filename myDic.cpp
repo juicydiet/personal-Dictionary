@@ -1,14 +1,82 @@
-// ---------------- HUFFMAN CODING PART (STUDENT PROJECT FRIENDLY) ----------------
-// You can paste this whole block in your project file.
-// Then connect it with your Trie + file handling.
-
-// NOTE: This block already includes ALL the words you sent as one big text,
-// so you can test Huffman compression directly.
-
 #include <bits/stdc++.h>
 using namespace std;
 
-// -------------------- HUFFMAN DATA STRUCTURES --------------------
+// ======================= TRIE SECTION =======================
+
+struct TrieNode {
+    TrieNode* child[26];
+    bool isEnd;
+    string meaning;
+
+    TrieNode() {
+        isEnd = false;
+        meaning = "";
+        for (int i = 0; i < 26; i++) child[i] = nullptr;
+    }
+};
+
+TrieNode* trieRoot = new TrieNode();
+
+// convert word to lowercase and keep only a-z
+string normalizeWord(const string &w) {
+    string res;
+    for (char c : w) {
+        if (isalpha((unsigned char)c)) {
+            res.push_back(tolower(c));
+        }
+    }
+    return res;
+}
+
+void insertIntoTrie(const string &wordRaw, const string &meaning) {
+    string word = normalizeWord(wordRaw);
+    if (word.empty()) return;
+    TrieNode* curr = trieRoot;
+    for (char c : word) {
+        int idx = c - 'a';
+        if (!curr->child[idx]) curr->child[idx] = new TrieNode();
+        curr = curr->child[idx];
+    }
+    curr->isEnd = true;
+    curr->meaning = meaning;
+}
+
+TrieNode* searchInTrie(const string &wordRaw) {
+    string word = normalizeWord(wordRaw);
+    if (word.empty()) return nullptr;
+    TrieNode* curr = trieRoot;
+    for (char c : word) {
+        int idx = c - 'a';
+        if (!curr->child[idx]) return nullptr;
+        curr = curr->child[idx];
+    }
+    return (curr->isEnd ? curr : nullptr);
+}
+
+// collect all (word, meaning) pairs from Trie
+void collectTrieWords(TrieNode* node, string &current, vector<pair<string,string>> &out) {
+    if (!node) return;
+    if (node->isEnd) {
+        out.push_back({current, node->meaning});
+    }
+    for (int i = 0; i < 26; i++) {
+        if (node->child[i]) {
+            current.push_back('a' + i);
+            collectTrieWords(node->child[i], current, out);
+            current.pop_back();
+        }
+    }
+}
+
+void clearTrie(TrieNode* node) {
+    if (!node) return;
+    for (int i = 0; i < 26; i++) {
+        if (node->child[i]) clearTrie(node->child[i]);
+    }
+    delete node;
+}
+
+// ======================= HUFFMAN SECTION =======================
 
 struct HuffmanNode {
     char ch;
@@ -25,90 +93,73 @@ struct HuffmanNode {
 
 struct HuffmanCompare {
     bool operator()(HuffmanNode* a, HuffmanNode* b) {
-        return a->freq > b->freq;  // smaller freq = higher priority
+        return a->freq > b->freq; // min-heap by freq
     }
 };
 
-// -------------------- HUFFMAN CORE FUNCTIONS --------------------
-
-// Count frequency of each character.
 unordered_map<char,int> buildFrequencyTable(const string &text) {
     unordered_map<char,int> freq;
     for (char c : text) freq[c]++;
     return freq;
 }
 
-// Build the Huffman tree.
 HuffmanNode* buildHuffmanTree(const unordered_map<char,int> &freq) {
     if (freq.empty()) return nullptr;
-
     priority_queue<HuffmanNode*, vector<HuffmanNode*>, HuffmanCompare> pq;
-
     for (auto &p : freq) {
         pq.push(new HuffmanNode(p.first, p.second));
     }
-
     while (pq.size() > 1) {
-        HuffmanNode* left  = pq.top(); pq.pop();
+        HuffmanNode* left = pq.top();  pq.pop();
         HuffmanNode* right = pq.top(); pq.pop();
-
         HuffmanNode* parent = new HuffmanNode('\0', left->freq + right->freq);
-        parent->left  = left;
+        parent->left = left;
         parent->right = right;
         pq.push(parent);
     }
-
     return pq.top();
 }
 
-// Generate Huffman codes (character → "0101…" string).
-void buildCodes(HuffmanNode* root, const string &code,
-                unordered_map<char,string> &codes) {
+void buildCodes(HuffmanNode* root, const string &code, unordered_map<char,string> &codes) {
     if (!root) return;
-
-    // Leaf node
     if (!root->left && !root->right) {
-        codes[root->ch] = (code == "" ? "0" : code); // handle single-char case
+        codes[root->ch] = (code == "" ? "0" : code);
         return;
     }
-
-    buildCodes(root->left,  code + "0", codes);
+    buildCodes(root->left, code + "0", codes);
     buildCodes(root->right, code + "1", codes);
 }
 
-// Encode any text to Huffman bitstring.
+// returns encoded bitstring, also gives root + freq table
 string huffmanEncode(const string &text,
                      unordered_map<char,string> &codes,
-                     HuffmanNode* &rootOut) {
+                     HuffmanNode* &rootOut,
+                     unordered_map<char,int> &freqOut) {
     if (text.empty()) {
         rootOut = nullptr;
         codes.clear();
+        freqOut.clear();
         return "";
     }
-
-    auto freq = buildFrequencyTable(text);
-    HuffmanNode* root = buildHuffmanTree(freq);
-
+    freqOut = buildFrequencyTable(text);
+    HuffmanNode* root = buildHuffmanTree(freqOut);
     codes.clear();
     buildCodes(root, "", codes);
 
     string encoded;
+    encoded.reserve(text.size() * 2);
     for (char c : text) encoded += codes[c];
 
     rootOut = root;
     return encoded;
 }
 
-// Decode Huffman bitstring back to original text.
 string huffmanDecode(const string &encoded, HuffmanNode* root) {
     string decoded;
     if (!root) return decoded;
-
     HuffmanNode* curr = root;
-
     for (char bit : encoded) {
         curr = (bit == '0') ? curr->left : curr->right;
-
         if (!curr->left && !curr->right) {
             decoded.push_back(curr->ch);
             curr = root;
@@ -117,7 +168,6 @@ string huffmanDecode(const string &encoded, HuffmanNode* root) {
     return decoded;
 }
 
-// Free memory of the tree.
 void freeHuffmanTree(HuffmanNode* root) {
     if (!root) return;
     freeHuffmanTree(root->left);
@@ -125,13 +175,9 @@ void freeHuffmanTree(HuffmanNode* root) {
     delete root;
 }
 
-// -------------------- YOUR DICTIONARY TEXT (ALL WORDS GIVEN) --------------------
+// ======================= INITIAL DATA (YOUR WORD LIST) =======================
 
-// This function packs ALL your words + meanings into one big string.
-// Later, you can replace this with:
-//   - data exported from Trie
-//   - or text read from file
-string getDictionaryText() {
+string getInitialDictionaryText() {
     return
         "Apple - A fruit.\n"
         "Able - Having the power or skill to do something.\n"
@@ -245,16 +291,6 @@ string getDictionaryText() {
         "Little - Small in size.\n"
         "Laugh - Express joy through sound.\n"
         "Land - Solid ground.\n"
-        "Key - A tool to open locks.\n"
-        "King - A male ruler.\n"
-        "Keep - To hold or maintain.\n"
-        "Know - To have knowledge of something.\n"
-        "Kind - Being helpful or caring.\n"
-        "Kid - A child.\n"
-        "Kill - To cause death.\n"
-        "Kick - Strike with the foot.\n"
-        "Kitchen - Room for cooking food.\n"
-        "Kite - A flying object tied to a string.\n"
         "Joy - Great happiness.\n"
         "Join - Connect or become part of something.\n"
         "Journey - Traveling from one place to another.\n"
@@ -346,16 +382,6 @@ string getDictionaryText() {
         "Window - Opening in a wall with glass.\n"
         "Watch - To look at; or a timepiece.\n"
         "Warm - Moderately hot.\n"
-        "X-ray - Radiation used for imaging bones.\n"
-        "Xylophone - A musical instrument.\n"
-        "Xenon - A chemical element.\n"
-        "Xerox - To photocopy.\n"
-        "Xenial - Friendly or hospitable.\n"
-        "Xylography - Wood engraving art.\n"
-        "Xerosis - Abnormal dryness of skin.\n"
-        "Xylose - A type of sugar.\n"
-        "X-axis - Horizontal axis on a graph.\n"
-        "Xenophobia - Fear of foreigners.\n"
         "You - The person being spoken to.\n"
         "Young - Not old.\n"
         "Yes - A positive response.\n"
@@ -386,36 +412,202 @@ string getDictionaryText() {
         "Queue - A line of people waiting.\n";
 }
 
-// -------------------- READY-TO-USE HOOKS FOR YOUR PROJECT --------------------
-
-// Use this in your project to get compressed data for the dictionary.
-string getCompressedDictionary(unordered_map<char,string> &codes, HuffmanNode* &root) {
-    string text = getDictionaryText();              // all words + meanings
-    string encoded = huffmanEncode(text, codes, root);
-    return encoded; // you can save this 'encoded' string into a file
+// Parse "Word - Meaning." style line
+bool parseLine(const string &line, string &word, string &meaning) {
+    int pos = line.find('-');
+    if (pos == string::npos) return false;
+    word = line.substr(0, pos);
+    meaning = line.substr(pos + 1);
+    // trim spaces
+    auto trim = [](string &s) {
+        while (!s.empty() && isspace((unsigned char)s.front())) s.erase(s.begin());
+        while (!s.empty() && isspace((unsigned char)s.back())) s.pop_back();
+    };
+    trim(word);
+    trim(meaning);
+    return !word.empty();
 }
 
-// Use this to get back original dictionary text from encoded form.
-string decodeDictionary(const string &encoded, HuffmanNode* root) {
-    return huffmanDecode(encoded, root);
+// build Trie from initial big text
+void loadInitialDataIntoTrie() {
+    string text = getInitialDictionaryText();
+    stringstream ss(text);
+    string line;
+    while (getline(ss, line)) {
+        if (line.empty()) continue;
+        string word, meaning;
+        if (parseLine(line, word, meaning)) {
+            insertIntoTrie(word, meaning);
+        }
+    }
 }
 
-/*
-HOW TO MERGE WITH FILE HANDLING + TRIE (idea):
+// ======================= FILE HANDLING + HUFFMAN INTEGRATION =======================
+// File format: dictionary.huff
+// Line 1: number_of_distinct_characters (N)
+// Next N lines: token frequency
+//    token is: single char OR "\n" for newline OR "\s" for space
+// Next token: the word "DATA"
+// Next token: encoded bitstring (0/1)
 
-1) At save time:
+const string HUFF_FILE = "dictionary.huff";
+
+void saveCompressedDictionaryToFile() {
+    // 1) Get all words from Trie and convert to text
+    vector<pair<string,string>> entries;
+    string current;
+    collectTrieWords(trieRoot, current, entries);
+
+    string text;
+    for (auto &p : entries) {
+        text += p.first + " - " + p.second + "\n";
+    }
+
+    if (text.empty()) {
+        cout << "Nothing to save.\n";
+        return;
+    }
+
+    // 2) Huffman encode
     unordered_map<char,string> codes;
+    unordered_map<char,int> freq;
     HuffmanNode* root = nullptr;
-    string encoded = getCompressedDictionary(codes, root);
+    string encoded = huffmanEncode(text, codes, root, freq);
 
-    // write 'encoded' to a file (binary or text)
-    // also save 'codes' or a serialised version of freq table
+    // 3) Write freq table + encoded string to file
+    ofstream fout(HUFF_FILE);
+    if (!fout) {
+        cout << "Error opening file for write.\n";
+        freeHuffmanTree(root);
+        return;
+    }
 
-2) At load time:
-    // read encoded string back from file
-    // rebuild Huffman tree using saved freq/codes
-    string decoded = decodeDictionary(encoded, root);
-    // now insert each word from 'decoded' into your Trie
+    fout << freq.size() << "\n";
+    for (auto &p : freq) {
+        char c = p.first;
+        string token;
+        if (c == '\n') token = "\\n";
+        else if (c == ' ') token = "\\s";
+        else token = string(1, c);
+        fout << token << " " << p.second << "\n";
+    }
+    fout << "DATA\n";
+    fout << encoded << "\n";
 
-You can now plug only this block into your student project.
-*/
+    fout.close();
+    freeHuffmanTree(root);
+    cout << "Dictionary compressed and saved to " << HUFF_FILE << "\n";
+}
+
+void loadCompressedDictionaryFromFile() {
+    ifstream fin(HUFF_FILE);
+    if (!fin) {
+        cout << "No compressed file found (" << HUFF_FILE << ").\n";
+        return;
+    }
+
+    int n;
+    if (!(fin >> n)) {
+        cout << "Corrupted file.\n";
+        return;
+    }
+
+    unordered_map<char,int> freq;
+    for (int i = 0; i < n; i++) {
+        string token;
+        int f;
+        fin >> token >> f;
+        char c;
+        if (token == "\\n") c = '\n';
+        else if (token == "\\s") c = ' ';
+        else c = token[0];
+        freq[c] = f;
+    }
+
+    string marker;
+    fin >> marker;
+    if (marker != "DATA") {
+        cout << "Invalid file format.\n";
+        return;
+    }
+
+    string encoded;
+    fin >> encoded;
+    fin.close();
+
+    // rebuild Huffman tree
+    HuffmanNode* root = buildHuffmanTree(freq);
+
+    // decode back to full text
+    string decoded = huffmanDecode(encoded, root);
+    freeHuffmanTree(root);
+
+    // clear old Trie and rebuild from decoded text
+    clearTrie(trieRoot);
+    trieRoot = new TrieNode();
+    stringstream ss(decoded);
+    string line;
+    while (getline(ss, line)) {
+        if (line.empty()) continue;
+        string word, meaning;
+        if (parseLine(line, word, meaning)) {
+            insertIntoTrie(word, meaning);
+        }
+    }
+
+    cout << "Dictionary loaded and decoded back into Trie from " << HUFF_FILE << "\n";
+}
+
+// ======================= SIMPLE MENU =======================
+
+void menu() {
+    while (true) {
+        cout << "\n--- DICTIONARY + TRIE + HUFFMAN ---\n";
+        cout << "1. Search word\n";
+        cout << "2. Insert new word\n";
+        cout << "3. Save compressed dictionary to file\n";
+        cout << "4. Load compressed dictionary from file\n";
+        cout << "5. Exit\n";
+        cout << "Enter choice: ";
+        int ch;
+        if (!(cin >> ch)) break;
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+
+        if (ch == 1) {
+            cout << "Enter word: ";
+            string w;
+            getline(cin, w);
+            TrieNode* node = searchInTrie(w);
+            if (node) {
+                cout << "Meaning: " << node->meaning << "\n";
+            } else {
+                cout << "Word not found.\n";
+            }
+        } else if (ch == 2) {
+            cout << "Enter word: ";
+            string w;
+            getline(cin, w);
+            cout << "Enter meaning: ";
+            string m;
+            getline(cin, m);
+            insertIntoTrie(w, m);
+            cout << "Inserted.\n";
+        } else if (ch == 3) {
+            saveCompressedDictionaryToFile();
+        } else if (ch == 4) {
+            loadCompressedDictionaryFromFile();
+        } else if (ch == 5) {
+            cout << "Exiting.\n";
+            break;
+        } else {
+            cout << "Invalid choice.\n";
+        }
+    }
+}
+
+int main() {
+    loadInitialDataIntoTrie();   // load your full word list into Trie at start
+    menu();
+    clearTrie(trieRoot);
+    return 0;
+}
