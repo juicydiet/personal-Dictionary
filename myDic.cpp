@@ -158,7 +158,8 @@ int main(){
         cout<<"enter word to insert: ";
         cin>>word;
         cout<<"enter meaning: ";
-        cin>>meaning;
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+        getline(cin, meaning);
         t->insert(word,meaning);
         break;
       case 2:
@@ -170,7 +171,8 @@ int main(){
         cout<<"enter word to update: ";
         cin>>word;
         cout<<"enter updated meaning: ";
-        cin>>meaning;
+        cin.ignore(numeric_limits<streamsize>::max(), '\n');
+        getline(cin, meaning);
         t->update(word,meaning);
         break;
       case 4:
@@ -183,6 +185,7 @@ int main(){
         cout<<"enter word to delete: ";
         cin>>word;
         t->deleteWord(word);
+        break;
       case 7:
         running = 0;
         cout <<"Exited"<<endl;
