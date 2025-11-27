@@ -1,631 +1,421 @@
+// ---------------- HUFFMAN CODING PART (STUDENT PROJECT FRIENDLY) ----------------
+// You can paste this whole block in your project file.
+// Then connect it with your Trie + file handling.
+
+// NOTE: This block already includes ALL the words you sent as one big text,
+// so you can test Huffman compression directly.
+
 #include <bits/stdc++.h>
 using namespace std;
 
-/* ------------------ HUFFMAN CODING ------------------ */
+// -------------------- HUFFMAN DATA STRUCTURES --------------------
 
-struct HuffNode {
+struct HuffmanNode {
     char ch;
     int freq;
-    HuffNode *left, *right;
-    HuffNode(char c, int f) : ch(c), freq(f), left(nullptr), right(nullptr) {}
-};
+    HuffmanNode *left;
+    HuffmanNode *right;
 
-struct HuffCmp {
-    bool operator()(HuffNode* a, HuffNode* b) {
-        return a->freq > b->freq;
+    HuffmanNode(char c, int f) {
+        ch = c;
+        freq = f;
+        left = right = nullptr;
     }
 };
 
-HuffNode* huffRoot = nullptr;
-unordered_map<char, string> huffCode;   // char -> bitstring
-
-void buildCodeTable(HuffNode* node, const string &path) {
-    if (!node) return;
-    if (!node->left && !node->right) {
-        // leaf
-        huffCode[node->ch] = path.empty() ? "0" : path; // handle single-char case
-        return;
+struct HuffmanCompare {
+    bool operator()(HuffmanNode* a, HuffmanNode* b) {
+        return a->freq > b->freq;  // smaller freq = higher priority
     }
-    buildCodeTable(node->left,  path + "0");
-    buildCodeTable(node->right, path + "1");
+};
+
+// -------------------- HUFFMAN CORE FUNCTIONS --------------------
+
+// Count frequency of each character.
+unordered_map<char,int> buildFrequencyTable(const string &text) {
+    unordered_map<char,int> freq;
+    for (char c : text) freq[c]++;
+    return freq;
 }
 
-void buildHuffman(const string &corpus) {
-    if (corpus.empty()) {
-        huffRoot = nullptr;
-        huffCode.clear();
-        return;
-    }
+// Build the Huffman tree.
+HuffmanNode* buildHuffmanTree(const unordered_map<char,int> &freq) {
+    if (freq.empty()) return nullptr;
 
-    unordered_map<char,int> freq;
-    for (char c : corpus) freq[c]++;
+    priority_queue<HuffmanNode*, vector<HuffmanNode*>, HuffmanCompare> pq;
 
-    priority_queue<HuffNode*, vector<HuffNode*>, HuffCmp> pq;
     for (auto &p : freq) {
-        pq.push(new HuffNode(p.first, p.second));
+        pq.push(new HuffmanNode(p.first, p.second));
     }
 
     while (pq.size() > 1) {
-        HuffNode* a = pq.top(); pq.pop();
-        HuffNode* b = pq.top(); pq.pop();
-        HuffNode* merged = new HuffNode('\0', a->freq + b->freq);
-        merged->left = a;
-        merged->right = b;
-        pq.push(merged);
+        HuffmanNode* left  = pq.top(); pq.pop();
+        HuffmanNode* right = pq.top(); pq.pop();
+
+        HuffmanNode* parent = new HuffmanNode('\0', left->freq + right->freq);
+        parent->left  = left;
+        parent->right = right;
+        pq.push(parent);
     }
 
-    huffRoot = pq.top();
-    huffCode.clear();
-    buildCodeTable(huffRoot, "");
+    return pq.top();
 }
 
-string huffmanEncode(const string &text) {
-    if (!huffRoot || huffCode.empty()) return text; // fallback: no compression
-    string bits;
-    for (char c : text) {
-        auto it = huffCode.find(c);
-        if (it != huffCode.end()) bits += it->second;
-        else bits += c; // fallback for unseen chars
+// Generate Huffman codes (character → "0101…" string).
+void buildCodes(HuffmanNode* root, const string &code,
+                unordered_map<char,string> &codes) {
+    if (!root) return;
+
+    // Leaf node
+    if (!root->left && !root->right) {
+        codes[root->ch] = (code == "" ? "0" : code); // handle single-char case
+        return;
     }
-    return bits;
+
+    buildCodes(root->left,  code + "0", codes);
+    buildCodes(root->right, code + "1", codes);
 }
 
-string huffmanDecode(const string &bits) {
-    if (!huffRoot || huffCode.empty()) return bits; // fallback
-    string out;
-    HuffNode* curr = huffRoot;
-    for (char b : bits) {
-        if (b == '0') curr = curr->left;
-        else if (b == '1') curr = curr->right;
-        else {
-            // invalid bit -> treat as raw char
-            out += b;
-            curr = huffRoot;
-            continue;
-        }
-
-        if (curr && !curr->left && !curr->right) {
-            out += curr->ch;
-            curr = huffRoot;
-        }
+// Encode any text to Huffman bitstring.
+string huffmanEncode(const string &text,
+                     unordered_map<char,string> &codes,
+                     HuffmanNode* &rootOut) {
+    if (text.empty()) {
+        rootOut = nullptr;
+        codes.clear();
+        return "";
     }
-    return out;
+
+    auto freq = buildFrequencyTable(text);
+    HuffmanNode* root = buildHuffmanTree(freq);
+
+    codes.clear();
+    buildCodes(root, "", codes);
+
+    string encoded;
+    for (char c : text) encoded += codes[c];
+
+    rootOut = root;
+    return encoded;
 }
 
-/* ------------------ TRIE FOR DICTIONARY ------------------ */
+// Decode Huffman bitstring back to original text.
+string huffmanDecode(const string &encoded, HuffmanNode* root) {
+    string decoded;
+    if (!root) return decoded;
 
-class TrieNode {
-public:
-    TrieNode* children[26];
-    bool wordEnd;
-    string encodedMeaning; // Huffman encoded meaning
+    HuffmanNode* curr = root;
 
-    TrieNode() {
-    char data;
-    string meaning;   
-    TrieNode(char ch) {
-        data = ch;
-        wordEnd = false;
-        encodedMeaning = "";
-        for (int i = 0; i < 26; i++) children[i] = nullptr;
-    }
-};
+    for (char bit : encoded) {
+        curr = (bit == '0') ? curr->left : curr->right;
 
-class Trie {
-public:
-    TrieNode* root;
-
-    Trie() { root = new TrieNode(); }
-
-    void insertHandler(TrieNode* node, const string &word, int i, const string &meaning) {
-        if (i == (int)word.size()) {
-            node->wordEnd = true;
-            node->encodedMeaning = huffmanEncode(meaning);
-            return;
+        if (!curr->left && !curr->right) {
+            decoded.push_back(curr->ch);
+            curr = root;
         }
-        int idx = word[i] - 'a';
-        if (idx < 0 || idx >= 26) return;
-        if (!node->children[idx]) node->children[idx] = new TrieNode();
-        insertHandler(node->children[idx], word, i + 1, meaning);
     }
-
-    void insert(const string &word, const string &meaning) {
-        if (word.empty()) return;
-        insertHandler(root, word, 0, meaning);
-    }
-
-    bool searchHandler(TrieNode* node, const string &word, int i) {
-        if (!node) return false;
-        if (i == (int)word.size()) {
-            if (node->wordEnd) {
-                string meaning = huffmanDecode(node->encodedMeaning);
-                cout << "Meaning: " << meaning << endl;
-                return true;
-            }
-            return false;
-        }
-        int idx = word[i] - 'a';
-        if (idx < 0 || idx >= 26) return false;
-        return searchHandler(node->children[idx], word, i + 1);
-    }
-
-    bool search(const string &word) {
-        return searchHandler(root, word, 0);
-    }
-
-    bool isEmpty(TrieNode* node) {
-        for (int i = 0; i < 26; i++)
-            if (node->children[i]) return false;
-        return true;
-    }
-
-    bool deleteHandler(TrieNode* node, const string &word, int i) {
-        if (!node) return false;
-        if (i == (int)word.size()) {
-            if (!node->wordEnd) return false;
-            node->wordEnd = false;
-            node->encodedMeaning.clear();
-            return isEmpty(node);
-        }
-        int idx = word[i] - 'a';
-        if (idx < 0 || idx >= 26 || !node->children[idx]) return false;
-
-        bool shouldDeleteChild = deleteHandler(node->children[idx], word, i + 1);
-        if (shouldDeleteChild) {
-            delete node->children[idx];
-            node->children[idx] = nullptr;
-            return !node->wordEnd && isEmpty(node);
-        }
-        return false;
-    }
-
-    void deleteWord(const string &word) {
-        if (deleteHandler(root, word, 0))
-            cout << "Deleted the entire word!" << endl;
-        else
-            cout << "Word not found!" << endl;
-    }
-
-    bool updateHandler(TrieNode* node, const string &word, int i, const string &newMeaning) {
-        if (!node) return false;
-        if (i == (int)word.size()) {
-            if (!node->wordEnd) return false;
-            node->encodedMeaning = huffmanEncode(newMeaning);
-            return true;
-        }
-        int idx = word[i] - 'a';
-        if (idx < 0 || idx >= 26 || !node->children[idx]) return false;
-        return updateHandler(node->children[idx], word, i + 1, newMeaning);
-    }
-
-    bool update(const string &word, const string &newMeaning) {
-        return updateHandler(root, word, 0, newMeaning);
-    }
-
-    void printAllWordsHandler(TrieNode* node, string current) {
-        if (!node) return;
-        if (node->wordEnd) {
-            cout << current << " : " << huffmanDecode(node->encodedMeaning) << endl;
-        }
-        for (int i = 0; i < 26; i++) {
-            if (node->children[i]) {
-                printAllWordsHandler(node->children[i], current + char('a' + i));
-            }
-        }
-        for (int i = 0; i < 26; i++) children[i] = nullptr;
-    }
-
-    void printAllWords() {
-        printAllWordsHandler(root, "");
-    }
-
-    void printWordsStartingWith(char ch) {
-        if (ch < 'a' || ch > 'z') {
-            cout << "Invalid starting letter." << endl;
-            return;
-        }
-        int idx = ch - 'a';
-        TrieNode* child = root->children[idx];
-        if (!child) {
-            cout << "No words starting with " << ch << endl;
-            return;
-        }
-        printAllWordsHandler(child, string(1, ch));
-    }
-};
-
-/* ------------------ FILE HANDLING (a.txt, b.txt, ...) ------------------ */
-
-struct FileNode {
-    char ch;
-    string filename;
-    FileNode* next;
-    FileNode(char c) : ch(c), filename(string(1, c) + ".txt"), next(nullptr) {}
-};
-
-FileNode* createFileList() {
-    FileNode* head = new FileNode('a');
-    FileNode* temp = head;
-    for (char c = 'b'; c <= 'z'; c++) {
-        temp->next = new FileNode(c);
-        temp = temp->next;
-    }
-    return head;
+    return decoded;
 }
 
-string getFile(char c, FileNode* head) {
-    c = tolower(c);
-    FileNode* temp = head;
-    while (temp) {
-        if (temp->ch == c) return temp->filename;
-        temp = temp->next;
-    }
-    return "";
+// Free memory of the tree.
+void freeHuffmanTree(HuffmanNode* root) {
+    if (!root) return;
+    freeHuffmanTree(root->left);
+    freeHuffmanTree(root->right);
+    delete root;
 }
 
-void saveToFile(const string &word, const string &meaning, FileNode* head) {
-    if (word.empty()) return;
-    string fname = getFile(word[0], head);
-    if (fname.empty()) return;
-    ofstream fout(fname, ios::app);
-    fout << word << " - " << meaning << endl;
-    fout.close();
+// -------------------- YOUR DICTIONARY TEXT (ALL WORDS GIVEN) --------------------
+
+// This function packs ALL your words + meanings into one big string.
+// Later, you can replace this with:
+//   - data exported from Trie
+//   - or text read from file
+string getDictionaryText() {
+    return
+        "Apple - A fruit.\n"
+        "Able - Having the power or skill to do something.\n"
+        "About - Concerning or relating to.\n"
+        "After - Following in time or order.\n"
+        "Again - Once more.\n"
+        "Always - At all times.\n"
+        "Animal - A living organism that isn’t a plant.\n"
+        "Answer - A reply to a question.\n"
+        "Act - To do something.\n"
+        "Angle - The space between two intersecting lines.\n"
+        "Book - A set of written pages.\n"
+        "Ball - A round object used in games.\n"
+        "Back - The rear part.\n"
+        "Big - Large in size.\n"
+        "Buy - To obtain by paying money.\n"
+        "Bring - To carry something with you.\n"
+        "Brother - A male sibling.\n"
+        "Better - Of higher quality.\n"
+        "Body - The physical structure of a person or animal.\n"
+        "Beautiful - Pleasing to the senses.\n"
+        "Cat - A small domesticated animal.\n"
+        "Car - A vehicle with wheels.\n"
+        "Child - A young human being.\n"
+        "Come - To move toward.\n"
+        "Call - To shout or communicate.\n"
+        "Cold - Having low temperature.\n"
+        "Change - To make different.\n"
+        "City - A large human settlement.\n"
+        "Chair - A seat for one person.\n"
+        "Color - The appearance of something due to light reflection.\n"
+        "Day - 24 hours.\n"
+        "Door - A movable barrier to enter/exit a room.\n"
+        "Dog - A domesticated animal.\n"
+        "Dance - To move rhythmically to music.\n"
+        "Draw - To make a picture.\n"
+        "Drive - To operate a vehicle.\n"
+        "Dark - Absence of light.\n"
+        "Dream - Thoughts during sleep.\n"
+        "Different - Not the same.\n"
+        "Dinner - The main meal of the day.\n"
+        "Eat - To consume food.\n"
+        "Eye - The organ of sight.\n"
+        "End - The final part.\n"
+        "Earth - Our planet.\n"
+        "Enjoy - To take pleasure in.\n"
+        "Enter - To go in.\n"
+        "Example - Something illustrating a point.\n"
+        "Early - Before the expected time.\n"
+        "Event - Something that happens.\n"
+        "Easy - Not difficult.\n"
+        "Face - The front part of the head.\n"
+        "Family - A group of related people.\n"
+        "Find - To discover something.\n"
+        "Food - What people or animals eat.\n"
+        "Friend - A person you like and trust.\n"
+        "Fast - Moving quickly.\n"
+        "Feel - Experience an emotion or sensation.\n"
+        "Fall - To drop downward.\n"
+        "Full - Containing as much as possible.\n"
+        "Far - A long distance away.\n"
+        "Go - To move from one place to another.\n"
+        "Good - Having desirable qualities.\n"
+        "Girl - A young female person.\n"
+        "Give - To hand something to someone.\n"
+        "Great - Very large or important.\n"
+        "Get - To receive something.\n"
+        "Game - An activity for fun or competition.\n"
+        "Group - A number of things or people together.\n"
+        "Green - A color.\n"
+        "Grow - To increase in size.\n"
+        "Hand - The end part of the arm.\n"
+        "House - A building for living.\n"
+        "Help - To assist.\n"
+        "Happy - Feeling joy.\n"
+        "Hear - To perceive sound.\n"
+        "Head - The uppermost part of the body.\n"
+        "Home - Place where one lives.\n"
+        "High - A great height.\n"
+        "Hope - Expectation for something good.\n"
+        "Hot - Having high temperature.\n"
+        "I - Referring to oneself.\n"
+        "Ice - Frozen water.\n"
+        "Idea - A thought or plan.\n"
+        "Important - Of great significance.\n"
+        "Inside - The inner part.\n"
+        "Involve - Include as part of something.\n"
+        "Interest - Wanting to know or learn.\n"
+        "Image - A picture or visual representation.\n"
+        "Improve - Make better.\n"
+        "Insect - A small animal with six legs.\n"
+        "Job - Work done for pay.\n"
+        "Jump - Push yourself off the ground.\n"
+        "Key - A tool to open locks.\n"
+        "King - A male ruler.\n"
+        "Keep - To hold or maintain.\n"
+        "Know - To have knowledge of something.\n"
+        "Kind - Being helpful or caring.\n"
+        "Kid - A child.\n"
+        "Kill - To cause death.\n"
+        "Kick - Strike with the foot.\n"
+        "Kitchen - Room for cooking food.\n"
+        "Kite - A flying object tied to a string.\n"
+        "Love - Deep affection.\n"
+        "Life - The existence of living things.\n"
+        "Long - A large length.\n"
+        "Look - To see or direct your eyes.\n"
+        "Leave - To go away from.\n"
+        "Light - Brightness; or not heavy.\n"
+        "Learn - Gain knowledge.\n"
+        "Little - Small in size.\n"
+        "Laugh - Express joy through sound.\n"
+        "Land - Solid ground.\n"
+        "Key - A tool to open locks.\n"
+        "King - A male ruler.\n"
+        "Keep - To hold or maintain.\n"
+        "Know - To have knowledge of something.\n"
+        "Kind - Being helpful or caring.\n"
+        "Kid - A child.\n"
+        "Kill - To cause death.\n"
+        "Kick - Strike with the foot.\n"
+        "Kitchen - Room for cooking food.\n"
+        "Kite - A flying object tied to a string.\n"
+        "Joy - Great happiness.\n"
+        "Join - Connect or become part of something.\n"
+        "Journey - Traveling from one place to another.\n"
+        "Just - Fair or morally right.\n"
+        "Juice - Liquid from fruits/vegetables.\n"
+        "Joke - Something said to make people laugh.\n"
+        "Jeans - Denim trousers.\n"
+        "Journal - A daily written record.\n"
+        "Man - An adult male.\n"
+        "Make - To create something.\n"
+        "Mother - A female parent.\n"
+        "More - A greater amount.\n"
+        "Move - Change position.\n"
+        "Money - Medium of exchange to buy things.\n"
+        "Month - One-twelfth of a year.\n"
+        "Meet - Come into the presence of.\n"
+        "Mind - The part that thinks and feels.\n"
+        "Morning - The early part of the day.\n"
+        "Mommy - Mother of a child.\n"
+        "Name - A word identifying a person or thing.\n"
+        "Night - Time of darkness.\n"
+        "New - Recently created or discovered.\n"
+        "Near - Close by.\n"
+        "Need - Require something.\n"
+        "Never - At no time.\n"
+        "Number - A value used for counting.\n"
+        "Nice - Pleasant or good.\n"
+        "Nothing - No thing.\n"
+        "Nature - The physical world and living things.\n"
+        "Question - Something asked to get information.\n"
+        "Quick - Fast.\n"
+        "Run - Move fast on foot.\n"
+        "Read - Look at and understand written words.\n"
+        "Right - Correct; or direction opposite left.\n"
+        "Room - A space in a building.\n"
+        "Road - A path for vehicles.\n"
+        "Red - A color.\n"
+        "Reach - Stretch to touch or get.\n"
+        "Reason - Explanation for something.\n"
+        "River - Flowing water body.\n"
+        "Rain - Water falling from clouds.\n"
+        "See - TO look at.\n"
+        "Say - Speak words.\n"
+        "Small - Not large.\n"
+        "School - Educational institution.\n"
+        "Start - Begin something.\n"
+        "Story - Description of events.\n"
+        "Strong - Having great strength.\n"
+        "Short - Small in length or height.\n"
+        "Smile - Expression of happiness.\n"
+        "Same - Not different.\n"
+        "Time - Ongoing sequence of events.\n"
+        "Thing - An object.\n"
+        "Take - To get or receive.\n"
+        "Think - Use your mind.\n"
+        "Talk - Speak words.\n"
+        "Try - Attempt something.\n"
+        "Turn - Rotate or change direction.\n"
+        "Team - Group working together.\n"
+        "Table - Furniture with a flat top.\n"
+        "True - Not false.\n"
+        "Up - Toward a higher place.\n"
+        "Use - To apply something for a purpose.\n"
+        "Under - Below something.\n"
+        "Until - Up to a time.\n"
+        "Unit - A single thing.\n"
+        "Usual - Commonly happening.\n"
+        "Urban - Related to city areas.\n"
+        "Universe - All space and matter.\n"
+        "Useful - Helpful or beneficial.\n"
+        "Uncle - Brother of your parent.\n"
+        "Very - Extremely.\n"
+        "Voice - Sound produced when speaking.\n"
+        "Village - A small community.\n"
+        "Value - Worth of something.\n"
+        "Visit - To go see a person/place.\n"
+        "View - A sight or opinion.\n"
+        "Victory - Winning.\n"
+        "Vehicle - Means of transportation.\n"
+        "Video - Moving visual recording.\n"
+        "Variety - Different elements or types.\n"
+        "Water - A clear liquid essential for life.\n"
+        "Work - Activity to achieve a result.\n"
+        "World - Earth or human society.\n"
+        "Way - A path or method.\n"
+        "Write - Mark letters or words.\n"
+        "Walk - Move on foot.\n"
+        "Word - A unit of language.\n"
+        "Window - Opening in a wall with glass.\n"
+        "Watch - To look at; or a timepiece.\n"
+        "Warm - Moderately hot.\n"
+        "X-ray - Radiation used for imaging bones.\n"
+        "Xylophone - A musical instrument.\n"
+        "Xenon - A chemical element.\n"
+        "Xerox - To photocopy.\n"
+        "Xenial - Friendly or hospitable.\n"
+        "Xylography - Wood engraving art.\n"
+        "Xerosis - Abnormal dryness of skin.\n"
+        "Xylose - A type of sugar.\n"
+        "X-axis - Horizontal axis on a graph.\n"
+        "Xenophobia - Fear of foreigners.\n"
+        "You - The person being spoken to.\n"
+        "Young - Not old.\n"
+        "Yes - A positive response.\n"
+        "Year - 12 months.\n"
+        "Yellow - A color.\n"
+        "Yard - Open area around a building.\n"
+        "Youth - The time of being young.\n"
+        "Yawn - To open your mouth wide when tired.\n"
+        "Yogurt - Fermented milk product.\n"
+        "Yield - Produce or give way.\n"
+        "Zoo - A place where animals are kept.\n"
+        "Zero - Number 0.\n"
+        "Zone - An area with boundaries.\n"
+        "Zebra - A striped African animal.\n"
+        "Zip - Fasten with a zipper.\n"
+        "Zoom - Move quickly or magnify digitally.\n"
+        "Zinc - A chemical element.\n"
+        "Zest - Great enthusiasm.\n"
+        "Zombie - Fictional undead creature.\n"
+        "Zeal - Passion or great energy.\n"
+        "Quality - How good something is.\n"
+        "Quiet - Making little noise.\n"
+        "Queen - Female ruler.\n"
+        "Quit - To stop doing something.\n"
+        "Quarter - One-fourth.\n"
+        "Quote - Repeat someone’s words.\n"
+        "Quest - A long search or mission.\n"
+        "Queue - A line of people waiting.\n";
 }
 
-void loadFilesToTrie(Trie &t, FileNode* head, string &corpus) {
-    FileNode* temp = head;
-    while (temp) {
-        ifstream fin(temp->filename);
-        if (!fin) {
-            temp = temp->next;
-            continue;
-        }
-        string line;
-        while (getline(fin, line)) {
-            int bar = line.find(" - ");
-            if (bar == -1) continue;
-            string word = line.substr(0, bar);
-            string meaning = line.substr(bar + 3);
+// -------------------- READY-TO-USE HOOKS FOR YOUR PROJECT --------------------
 
-            // normalize to lowercase
-            for (char &c : word) c = tolower(c);
-
-            if (!word.empty()) {
-                t.insert(word, meaning);  // will be encoded later, after Huffman build
-                corpus += meaning;
-            }
-        }
-        fin.close();
-        temp = temp->next;
-    }
+// Use this in your project to get compressed data for the dictionary.
+string getCompressedDictionary(unordered_map<char,string> &codes, HuffmanNode* &root) {
+    string text = getDictionaryText();              // all words + meanings
+    string encoded = huffmanEncode(text, codes, root);
+    return encoded; // you can save this 'encoded' string into a file
 }
 
-/* ------------------ MAIN ------------------ */
-
-int main() {
-    Trie t;
-    FileNode* fHead = createFileList();
-    string corpus;
-
-    // First pass: load meanings to build Huffman corpus
-    loadFilesToTrie(t, fHead, corpus);
-
-    // Build Huffman codes from all meanings
-    buildHuffman(corpus);
-
-    // Reload files so that Trie actually stores encoded meanings
-    // (simple way: clear Trie and insert again with encoding)
-    Trie encodedTrie;
-    corpus.clear();
-    loadFilesToTrie(encodedTrie, fHead, corpus);
-    t = encodedTrie; // shallow copy is fine here since we aren't managing custom pointers extensively
-
-    int running = 1, choice;
-    string word, meaning;
-    char ch;
-
-    cout << "Welcome to the Dictionary Application (Trie + Huffman)" << endl;
-    cout << "Note: All words should be in lowercase letters." << endl;
-
-    while (running) {
-        cout << "\nEnter your choice" << endl;
-        cout << "1. Add a word" << endl;
-        cout << "2. Search a word" << endl;
-        cout << "3. Update a word meaning" << endl;
-        cout << "4. Show words starting from a letter" << endl;
-        cout << "5. Show all words" << endl;
-        cout << "6. Delete a word" << endl;
-        cout << "7. Exit" << endl;
-        cout << "Choice: ";
-        cin >> choice;
-
-        switch (choice) {
-        case 1:
-            cout << "Enter word to insert: ";
-            cin >> word;
-            for (char &c : word) c = tolower(c);
-            cout << "Enter meaning: ";
-            cin.ignore(numeric_limits<streamsize>::max(), '\n');
-            getline(cin, meaning);
-            t.insert(word, meaning);
-            saveToFile(word, meaning, fHead);
-            cout << "Word inserted." << endl;
-            break;
-
-        case 2:
-            cout << "Enter word to search: ";
-            cin >> word;
-            for (char &c : word) c = tolower(c);
-            if (!t.search(word)) cout << "Word not found" << endl;
-            break;
-
-        case 3:
-            cout << "Enter word to update: ";
-            cin >> word;
-            for (char &c : word) c = tolower(c);
-            cout << "Enter updated meaning: ";
-            cin.ignore(numeric_limits<streamsize>::max(), '\n');
-            getline(cin, meaning);
-            if (t.update(word, meaning)) {
-                // For simplicity, we only update in Trie, not rewriting file.
-                cout << "Updated in Trie (file update can be added separately)." << endl;
-            } else {
-                cout << "Word not found in Trie." << endl;
-            }
-            break;
-
-        case 4:
-            cout << "Enter starting letter: ";
-            cin >> ch;
-            ch = tolower(ch);
-            t.printWordsStartingWith(ch);
-            break;
-public: 
-    TrieNode* root;
-    Trie() { root = new TrieNode('\0'); }
-
-    void insertHandler(TrieNode* node, string word, int i, string meaning) {      
-        if (i == word.size()) {
-            node->wordEnd = true;
-            node->meaning = meaning; 
-            return;
-        }       
-        int index = word[i] - 'a';
-        TrieNode* child;
-        if (node->children[index] != nullptr) child = node->children[index];
-        else {
-            child = new TrieNode(word[i]);
-            node->children[index] = child;
-        }
-        insertHandler(child, word, i + 1, meaning);
-    }
-
-    void insert(string word, string meaning) { insertHandler(root, word, 0, meaning); }
-
-    bool searchHandler(TrieNode* node, string word, int i) {
-        if (i == word.size()) {
-            cout << "Meaning: " << node->meaning << endl;
-            return node->wordEnd;
-        }
-        int index = word[i] - 'a';
-        if (!node->children[index]) return false;
-        return searchHandler(node->children[index], word, i + 1);
-    }
-
-    bool search(string word) { return searchHandler(root, word, 0); }
-
-    bool isEmpty(TrieNode* node) {
-        for (int i = 0; i < 26; i++)
-            if (node->children[i] != nullptr) return false;
-        return true;
-    }
-
-    bool deleteHandler(TrieNode* node, string &word, int i) {
-        if (i == word.size()) {
-            if (!node->wordEnd) return false;
-            node->wordEnd = false;           
-            return true;
-        }
-        int index = word[i] - 'a';
-        TrieNode* child = node->children[index];
-        if (!child) return false; 
-        bool deleted = deleteHandler(child, word, i + 1);
-        if (deleted && !child->wordEnd && isEmpty(child)) {
-            delete child;
-            node->children[index] = nullptr;
-        }
-        return deleted;
-    }
-    return searchHandler(child, word, i + 1);
-  }
-
-  bool search(string word) {
-    return searchHandler(root, word,0);
-  }
-
-        case 5:
-            t.printAllWords();
-            break;
-
-        case 6:
-            cout << "Enter word to delete: ";
-            cin >> word;
-            for (char &c : word) c = tolower(c);
-            t.deleteWord(word);
-            // File deletion sync is possible but omitted for brevity
-            break;
-
-        case 7:
-            running = 0;
-            cout << "Exited." << endl;
-            break;
-
-        default:
-            cout << "Invalid choice" << endl;
-        }
-  bool deleteHandler(TrieNode* node, string &word, int i) {
-    if (i == word.size()) {
-        if (!node->wordEnd) return false;
-        node->wordEnd = false;           
-        return true;
-
-    void deleteWord(string word) {
-        if (deleteHandler(root, word, 0)) cout << "Deleted the entire word!" << endl;
-        else cout << "Word not found!" << endl;
-    }
-
-    void printAllWords() { printAllWordsHandler(root, ""); }
-
-    void printAllWordsHandler(TrieNode* node, string current) {
-        if (node->wordEnd) cout << current << " : " << node->meaning << endl;
-        for (int i = 0; i < 26; i++)
-            if (node->children[i]) printAllWordsHandler(node->children[i], current + char('a' + i));
-    }
-
-    bool update(string word, string newMeaning) { return updateHandler(root, word, 0, newMeaning); }
-
-    bool updateHandler(TrieNode* node, string word, int i, string newMeaning) {
-        if (i == word.size()) {
-            node->meaning = newMeaning;
-            return node->wordEnd;
-        }
-        int index = word[i] - 'a';
-        if (!node->children[index]) return false;
-        return updateHandler(node->children[index], word, i + 1, newMeaning);
-    }
-
-    void printWordsStartingWith(char ch) {
-        int idx = ch - 'a';
-        if (!root->children[idx]) {
-            cout << "No words starting with " << ch << endl;
-            return;
-        }
-        printAllWordsHandler(root->children[idx], string(1, ch));
-    }
-};
-
-struct FileNode {
-    char ch;
-    string filename;
-    FileNode* next;
-    FileNode(char c) : ch(c), filename(string(1,c) + ".txt"), next(nullptr) {}
-};
-
-FileNode* createFileList() {
-    FileNode* head = new FileNode('a');
-    FileNode* temp = head;
-    for (char c = 'b'; c <= 'z'; c++) {
-        temp->next = new FileNode(c);
-        temp = temp->next;
-    }
-    return head;
+// Use this to get back original dictionary text from encoded form.
+string decodeDictionary(const string &encoded, HuffmanNode* root) {
+    return huffmanDecode(encoded, root);
 }
 
-string getFile(char c, FileNode* head) {
-    FileNode* temp = head;
-    while(temp){
-        if(temp->ch == c) return temp->filename;
-        temp = temp->next;
-    }
-    return "";
-}
+/*
+HOW TO MERGE WITH FILE HANDLING + TRIE (idea):
 
-void saveToFile(string word, string meaning, FileNode* head) {
-    string fname = getFile(word[0], head);
-    ofstream fout(fname, ios::app);
-    fout << word << " - " << meaning << endl;
-    fout.close();
-}
+1) At save time:
+    unordered_map<char,string> codes;
+    HuffmanNode* root = nullptr;
+    string encoded = getCompressedDictionary(codes, root);
 
-void loadFilesToTrie(Trie* t, FileNode* head) {
-    FileNode* temp = head;
-    while(temp){
-        ifstream fin(temp->filename);
-        if(!fin){ temp = temp->next; continue; }
+    // write 'encoded' to a file (binary or text)
+    // also save 'codes' or a serialised version of freq table
 
-        string line;
-        while(getline(fin, line)){
-            int bar = line.find(' - ');
-            if(bar == -1) continue;
-            string word = line.substr(0, bar);
-            string meaning = line.substr(bar+1);
+2) At load time:
+    // read encoded string back from file
+    // rebuild Huffman tree using saved freq/codes
+    string decoded = decodeDictionary(encoded, root);
+    // now insert each word from 'decoded' into your Trie
 
-            if(word.size() > 0 && isupper(word[0])) word[0] = tolower(word[0]);
-            t->insert(word, meaning);
-        }
-        fin.close();
-        temp = temp->next;
-    }
-}
-
-int main(){
-    Trie* t = new Trie();
-    FileNode* fHead = createFileList();
-    loadFilesToTrie(t, fHead);
-
-    int running = 1, choice;
-    string word, meaning;
-    char ch;
-
-    cout <<"Welcome to the Dictionary Application"<<endl;
-    cout<< "All words are to be inserted lowercase letters"<<endl;
-
-    while(running){
-        cout <<"Enter your choice"<<endl;
-        cout <<"1. Add a word"<<endl;
-        cout <<"2. Search a word"<<endl;
-        cout <<"3. Update a word meaning"<<endl;
-        cout <<"4. Show words starting from a letter"<<endl;
-        cout <<"5. Show all words"<<endl;
-        cout <<"6. Delete a word"<<endl;
-        cout <<"7. Exit"<<endl;
-        cin >> choice;
-
-        switch(choice){
-            case 1:
-                cout << "Enter word to insert: "; cin >> word;
-                cout << "Enter meaning: ";
-                cin.ignore(numeric_limits<streamsize>::max(), '\n');
-                getline(cin, meaning);
-                if(!word.empty() && isupper(word[0])) word[0] = tolower(word[0]);
-                t->insert(word, meaning);
-                saveToFile(word, meaning, fHead);
-                break;
-            case 2:
-                cout << "Enter word to search: "; cin >> word;
-                if(!word.empty() && isupper(word[0])) word[0] = tolower(word[0]);
-                if(!t->search(word)) cout << "Word not found" << endl;
-                break;
-            case 3:
-                cout << "Enter word to update: "; cin >> word;
-                cout << "Enter updated meaning: ";
-                cin.ignore(numeric_limits<streamsize>::max(), '\n');
-                getline(cin, meaning);
-                if(!word.empty() && isupper(word[0])) word[0] = tolower(word[0]);
-                t->update(word, meaning);
-                cout << "Updated!" << endl;
-                break;
-            case 4:
-                cout << "Enter starting letter: "; cin >> ch;
-                if(isupper(ch)) ch = tolower(ch);
-                t->printWordsStartingWith(ch);
-                break;
-            case 5:
-                t->printAllWords();
-                break;
-            case 6:
-                cout << "Enter word to delete: "; cin >> word;
-                if(!word.empty() && isupper(word[0])) word[0] = tolower(word[0]);
-                t->deleteWord(word);
-                break;
-            case 7:
-                running = 0;
-                cout << "Exited" << endl;
-                break;
-            default:
-                cout << "Invalid choice" << endl;
-        }
-    }
-
-    return 0;
-}
+You can now plug only this block into your student project.
+*/
